@@ -1,7 +1,7 @@
 import envHelper from './env';
 
 type UnpackPromise<T> = T extends Promise<infer R> ? R : T;
-type UnpackAsyncFunction<T> = T extends () => infer R ? UnpackPromise<R> : T;
+type UnpackAsyncFunction<T> = T extends (...args: any) => infer R ? UnpackPromise<R> : T;
 type UnpackAsyncMap<Map extends {}> = {
     [K in keyof Map]: UnpackAsyncFunction<Map[K]>;
 };
