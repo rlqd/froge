@@ -164,7 +164,7 @@ froge()
             };
         },
         telegram: async ctx => {
-            const bot = new Telegraf(ctx.envs.TG_BOT_TOKEN.string());
+            const bot = new Telegraf(ctx.envs.TG_BOT_TOKEN.s() /* s() is short for string() */);
             const webhookRoutes = await bot.createWebhook({domain: ctx.envs.PUBLIC_ADDRESS.string()});
             return { bot, webhookRoutes };
         },

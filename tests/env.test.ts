@@ -16,6 +16,12 @@ describe('Envs', () => {
         delete process.env.TEST_STRING;
     });
 
+    it('s(): works as an alias of string()', () => {
+        process.env.TEST_STRING = 'hello';
+        assert.equal(envs.TEST_STRING.s(), 'hello');
+        delete process.env.TEST_STRING;
+    });
+
     it('string(): returns default when unset', () => {
         delete process.env.TEST_STRING;
         assert.equal(envs.TEST_STRING.string('def'), 'def');
@@ -27,6 +33,21 @@ describe('Envs', () => {
             () => envs.TEST_STRING.string(),
             { message: 'Env var "TEST_STRING" is not set' }
         );
+    });
+
+    it('string(): throws when empty', () => {
+        process.env.TEST_STRING = '';
+        assert.throws(
+            () => envs.TEST_STRING.string(),
+            { message: 'Env var "TEST_STRING" is empty' }
+        );
+        delete process.env.TEST_STRING;
+    });
+
+    it('string(): allows empty when configured', () => {
+        process.env.TEST_STRING = '';
+        assert.equal(envs.TEST_STRING.string(undefined, {nonEmpty: false}), '');
+        delete process.env.TEST_STRING;
     });
 
     it('match(): returns first match on regex', () => {

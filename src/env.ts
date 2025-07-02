@@ -24,10 +24,20 @@ class EnvWrapper {
         return this.string();
     }
 
-    public string(defaultValue?: string) {
+    // Aliases
+    public readonly s: typeof this.string = this.string.bind(this);
+    public readonly n: typeof this.number = this.number.bind(this);
+    public readonly i: typeof this.int = this.int.bind(this);
+    public readonly b: typeof this.bool = this.bool.bind(this);
+
+    public string(defaultValue?: string, config: {nonEmpty?: boolean} = {}) {
+        const nonEmpty = config.nonEmpty ?? true;
         const val = process.env[this.name] ?? defaultValue;
         if (typeof val === 'undefined') {
             throw new Error(`Env var "${this.name}" is not set`);
+        }
+        if (nonEmpty && val.length === 0) {
+            throw new Error(`Env var "${this.name}" is empty`);
         }
         return val;
     }
