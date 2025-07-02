@@ -1,0 +1,50 @@
+{
+  "name": "froge",
+  "version": "1.0.0",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "typesVersions": {
+    "*": {
+      ".": [
+        "./dist/index.d.ts"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepublishOnly": "npm run test && npm run clean && npm run build",
+    "clean": "rimraf dist && rimraf test-dist",
+    "build": "tsc",
+    "test": "npm run build-tests && npm run exec-tests",
+    "build-tests": "tsc --project tsconfig.test.json",
+    "exec-tests": "node --test"
+  },
+  "author": "rlqd.dev",
+  "license": "MIT",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.8.3"
+  },
+  "bugs": {
+    "url": "https://github.com/rlqd/froge/issues"
+  },
+  "repository": {
+    "url": "https://github.com/rlqd/froge",
+    "type": "git"
+  },
+  "keywords": [
+    "backend",
+    "node",
+    "lifecycle",
+    "boot",
+    "modules",
+    "components",
+    "env",
+    "config"
+  ]
+}
