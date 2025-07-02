@@ -156,7 +156,7 @@ froge()
                 routes: express.Router()
                     .get('/joke', async (req, res) => {
                         // Access other services
-                        res.send(ctx.items.hourlyJoke.joke);
+                        res.send(ctx.services.hourlyJoke.joke);
                     })
                     .post('/like', async (req, res) => {
                         await db.query('UPDATE likes SET amount = amount + 1 WHERE joke = ?', [req.query.joke]);
@@ -175,8 +175,8 @@ froge()
             let server: Server;
             await new Promise<void>((resolve, reject) => {
                 server = express()
-                    .use(ctx.items.telegram.webhookRoutes)
-                    .use('/api', ctx.items.api.routes)
+                    .use(ctx.services.telegram.webhookRoutes)
+                    .use('/api', ctx.services.api.routes)
                     .listen(ctx.envs.LISTEN_PORT.port(8080), err => err ? reject(err) : resolve());
             });
             return server!;
