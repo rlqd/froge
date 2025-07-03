@@ -122,8 +122,7 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
     }
 
     public async stop(reasonText?: string) {
-        const timeoutInfo = this.config.gracefulShutdownTimeoutMs ? `timeout: ${this.config.gracefulShutdownTimeoutMs}ms` : 'no timeout';
-        this.config.verbose && console.log(`Stopping (${reasonText ?? 'unspecified reason'}, ${timeoutInfo})...`);
+        this.config.verbose && console.log(`Stopping (${reasonText ?? 'unspecified reason'})...`);
         const stopGroups = Map.groupBy(
             Array.from(this.map.entries()).reverse(),
             ([key, info]) => this.config.parallelStopGroups ? info.level : key,
@@ -159,6 +158,7 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
     }
 
     public async shutdown(reasonText?: string) {
+        const timeoutInfo = this.config.gracefulShutdownTimeoutMs ? `timeout: ${this.config.gracefulShutdownTimeoutMs}ms` : 'no timeout';
         if (this.config.gracefulShutdownTimeoutMs) {
             setTimeout(() => {
                 console.error(`Reached shutdown timeout ${this.config.gracefulShutdownTimeoutMs}ms, killing...`);
@@ -166,7 +166,7 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
             }, this.config.gracefulShutdownTimeoutMs).unref();
         }
         try {
-            await this.stop(reasonText ?? 'shutdown');
+            await this.stop((reasonText ?? 'shutdown') + ', ' + timeoutInfo);
         } catch (e) {
             console.error('Shutdown incomplete, killing... Reason:', e);
             process.exit(1);

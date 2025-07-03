@@ -14,6 +14,7 @@ npm i froge
 
 * [Basic usage & explanation](#basic-usage--explanation)
 * [Advanced example](#advanced-example)
+* [Start one specific service](#start-one-specific-service)
 * [Full configuration reference](#full-configuration-reference)
 
 ## Basic usage & explanation
@@ -205,6 +206,57 @@ froge()
             process.exit(1);
         });
 ```
+
+## Start one specific service
+
+`only` method starts a specific service and all it's dependencies.
+It can be useful to write cli commands for your server.
+
+Imagine a server which has a db service and some others, defined in `server.ts`:
+
+```typescript
+import froge from 'froge';
+import { createPool } from 'mysql2/promise';
+
+export default froge()
+    .up({ /* dependencies of db (imagine something here), will be started */ })
+    .up({
+        // db - will be started
+        db: ctx => createPool({
+            host: ctx.envs.MYSQL_HOST.s('localhost'),
+            port: ctx.envs.MYSQL_PORT.port(3306),
+            // ...
+        }),
+        something: () => 'something else', // won't start
+    })
+    .up({ /* more services that won't start */ })
+    .down({
+        db: pool => pool.end(),
+    })
+
+```
+
+You only need to start db in the cli command `migrate`:
+
+```typescript
+import { Command } from 'commander';
+import server from './server';
+
+const program = new Command();
+program.command('migrate')
+    .description('Init database structure')
+    .action(async () => {
+        const db = await server.only('db'); // this will only start db and it's dependencies
+        try {
+            await db.query('CREATE TABLE ...');
+        } finally {
+            await server.shutdown();
+        }
+    });
+
+program.parse();
+```
+
 
 ## Full configuration reference
 
