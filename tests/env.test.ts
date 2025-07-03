@@ -44,9 +44,15 @@ describe('Envs', () => {
         delete process.env.TEST_STRING;
     });
 
+    it('string(): allows empty when default provided', () => {
+        process.env.TEST_STRING = '';
+        assert.equal(envs.TEST_STRING.string({def: 'default'}), 'default');
+        delete process.env.TEST_STRING;
+    });
+
     it('string(): allows empty when configured', () => {
         process.env.TEST_STRING = '';
-        assert.equal(envs.TEST_STRING.string(undefined, {nonEmpty: false}), '');
+        assert.equal(envs.TEST_STRING.string({nonEmpty: false}), '');
         delete process.env.TEST_STRING;
     });
 
@@ -75,7 +81,7 @@ describe('Envs', () => {
         const p = tempPath('noexist');
         process.env.TEST_PATH = p;
         assert.throws(
-            () => envs.TEST_PATH.path(undefined, { exist: true }),
+            () => envs.TEST_PATH.path({ exist: true }),
             { message: `Env var "TEST_PATH" path doesn't exist` }
         );
         delete process.env.TEST_PATH;
@@ -86,14 +92,14 @@ describe('Envs', () => {
         const f = tempPath('file.txt');
         fs.writeFileSync(f, 'x');
         process.env.TEST_PATH = f;
-        assert.equal(envs.TEST_PATH.path(undefined, { exist: true }), f);
+        assert.equal(envs.TEST_PATH.path({ exist: true }), f);
         fs.unlinkSync(f);
 
         // Directory
         const d = tempPath('dir');
         fs.mkdirSync(d);
         process.env.TEST_PATH = d;
-        assert.equal(envs.TEST_PATH.path(undefined, { exist: true }), d);
+        assert.equal(envs.TEST_PATH.path({ exist: true }), d);
         fs.rmdirSync(d);
 
         delete process.env.TEST_PATH;
@@ -171,11 +177,11 @@ describe('Envs', () => {
     it('number(): enforces min and max', () => {
         process.env.TEST_NUM = '10';
         assert.throws(
-            () => envs.TEST_NUM.number(undefined, { min: 20 }),
+            () => envs.TEST_NUM.number({ min: 20 }),
             { message: 'Env var "TEST_NUM" value is too small (<20)' }
         );
         assert.throws(
-            () => envs.TEST_NUM.number(undefined, { max: 5 }),
+            () => envs.TEST_NUM.number({ max: 5 }),
             { message: 'Env var "TEST_NUM" value is too large (>5)' }
         );
         delete process.env.TEST_NUM;
@@ -196,7 +202,7 @@ describe('Envs', () => {
 
     it('int(): accepts non-integer non-strict', () => {
         process.env.TEST_INT = '5.5';
-        assert.equal(envs.TEST_INT.int(undefined, { strict: false }), 5);
+        assert.equal(envs.TEST_INT.int({ strict: false }), 5);
         delete process.env.TEST_INT;
     });
 
@@ -229,16 +235,16 @@ describe('Envs', () => {
     it('bool(): rejects non-strict values in strict mode', () => {
         process.env.TEST_BOOL = 'yes';
         assert.throws(
-            () => envs.TEST_BOOL.bool(undefined, { strict: true }),
+            () => envs.TEST_BOOL.bool({ strict: true }),
             { message: 'Env var "TEST_BOOL" is not a valid boolean' }
         );
     });
 
     it('bool(): accepts extended values in non-strict mode', () => {
         process.env.TEST_BOOL = 'yes';
-        assert.equal(envs.TEST_BOOL.bool(undefined, { strict: false }), true);
+        assert.equal(envs.TEST_BOOL.bool({ strict: false }), true);
         process.env.TEST_BOOL = 'N';
-        assert.equal(envs.TEST_BOOL.bool(undefined, { strict: false }), false);
+        assert.equal(envs.TEST_BOOL.bool({ strict: false }), false);
     });
 
     it('bool(): uses default when unset', () => {
@@ -250,7 +256,7 @@ describe('Envs', () => {
     it('bool(): uses a custom map', () => {
         process.env.TEST_BOOL = 'on';
         const map = { on: true, off: false };
-        assert.equal(envs.TEST_BOOL.bool(undefined, { map }), true);
+        assert.equal(envs.TEST_BOOL.bool({ map }), true);
         delete process.env.TEST_BOOL;
     });
 });

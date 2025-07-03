@@ -30,13 +30,20 @@ class EnvWrapper {
     public readonly i: typeof this.int = this.int.bind(this);
     public readonly b: typeof this.bool = this.bool.bind(this);
 
-    public string(defaultValue?: string, config: {nonEmpty?: boolean} = {}) {
+    public string(defaultValue?: string): string;
+    public string(config?: {def?: string, nonEmpty?: boolean}): string;
+    public string(defaultOrConfig?: string|{def?: string, nonEmpty?: boolean}) {
+        const config = typeof defaultOrConfig === 'object' ? defaultOrConfig : {};
+        const defVal = typeof defaultOrConfig === 'string' ? defaultOrConfig : config.def;
         const nonEmpty = config.nonEmpty ?? true;
-        const val = process.env[this.name] ?? defaultValue;
+        const val = process.env[this.name] ?? defVal;
         if (typeof val === 'undefined') {
             throw new Error(`Env var "${this.name}" is not set`);
         }
         if (nonEmpty && val.length === 0) {
+            if (defVal?.length) {
+                return defVal;
+            }
             throw new Error(`Env var "${this.name}" is empty`);
         }
         return val;
@@ -51,8 +58,12 @@ class EnvWrapper {
         return matches[0];
     }
 
-    public path(defaultValue?: string, config: {file?: boolean, exist?: boolean} = {}): string {
-        const val = this.string(defaultValue);
+    public path(defaultValue?: string): string;
+    public path(config?: {def?: string, file?: boolean, exist?: boolean}): string;
+    public path(defaultOrConfig?: string|{def?: string, file?: boolean, exist?: boolean}): string {
+        const config = typeof defaultOrConfig === 'object' ? defaultOrConfig : {};
+        const defVal = typeof defaultOrConfig === 'string' ? defaultOrConfig : config.def;
+        const val = this.string(defVal);
         if (config.exist || typeof config.file !== 'undefined') {
             try {
                 const stat = fs.statSync(val);
@@ -105,12 +116,16 @@ class EnvWrapper {
         return val;
     }
 
-    public number(defaultValue?: number, config: {min?: number, max?: number} = {}): number {
+    public number(defaultValue?: number): number;
+    public number(config?: {def?: number, min?: number, max?: number}): number;
+    public number(defaultOrConfig?: number|{def?: number, min?: number, max?: number}): number {
+        const config = typeof defaultOrConfig === 'object' ? defaultOrConfig : {};
+        const defVal = typeof defaultOrConfig === 'number' ? defaultOrConfig : config.def;
         const val = process.env[this.name];
-        if (typeof val === 'undefined' && typeof defaultValue === 'undefined') {
+        if (typeof val === 'undefined' && typeof defVal === 'undefined') {
             throw new Error(`Env var "${this.name}" is not set`);
         }
-        const num = Number(val ?? defaultValue);
+        const num = Number(val ?? defVal);
         if (isNaN(num)) {
             throw new Error(`Env var "${this.name}" is not a valid number`);
         }
@@ -123,10 +138,14 @@ class EnvWrapper {
         return num;
     }
 
-    public int(defaultValue?: number, config: {min?: number, max?: number, strict?: boolean} = {}): number {
+    public int(defaultValue?: number): number;
+    public int(config?: {def?: number, min?: number, max?: number, strict?: boolean}): number;
+    public int(defaultOrConfig?: number|{def?: number, min?: number, max?: number, strict?: boolean}): number {
+        const config = typeof defaultOrConfig === 'object' ? defaultOrConfig : {};
+        const defVal = typeof defaultOrConfig === 'number' ? defaultOrConfig : config.def;
         const strict = config.strict ?? true;
 
-        const val = this.number(defaultValue, config);
+        const val = this.number({...config, def: defVal});
         const int = parseInt(String(val));
         if (strict && int != val) {
             throw new Error(`Env var "${this.name}" is not a valid integer`);
@@ -134,23 +153,31 @@ class EnvWrapper {
         return int;
     }
 
-    public port(defaultValue?: number, config: {min?: number, max?: number, strict?: boolean} = {}): number {
-        const val = this.int(defaultValue, config);
+    public port(defaultValue?: number): number;
+    public port(config?: {def?: number, min?: number, max?: number, strict?: boolean}): number;
+    public port(defaultOrConfig?: number|{def?: number, min?: number, max?: number, strict?: boolean}): number {
+        const config = typeof defaultOrConfig === 'object' ? defaultOrConfig : {};
+        const defVal = typeof defaultOrConfig === 'number' ? defaultOrConfig : config.def;
+        const val = this.int({...config, def: defVal});
         if (val < 0 || val > 65535) {
             throw new Error(`Env var "${this.name}" is not a valid port number`);
         }
         return val;
     }
 
-    public bool(defaultValue?: boolean, config: {strict?: boolean, map?: Record<string,boolean>} = {}): boolean {
+    public bool(defaultValue?: boolean): boolean;
+    public bool(config?: {def?: boolean, strict?: boolean, map?: Record<string,boolean>}): boolean;
+    public bool(defaultOrConfig?: boolean|{def?: boolean, strict?: boolean, map?: Record<string,boolean>}): boolean {
+        const config = typeof defaultOrConfig === 'object' ? defaultOrConfig : {};
+        const defVal = typeof defaultOrConfig === 'boolean' ? defaultOrConfig : config.def;
         const strict = config.strict ?? false;
 
         const val = process.env[this.name];
         if (typeof val === 'undefined') {
-            if (typeof defaultValue === 'undefined') {
+            if (typeof defVal === 'undefined') {
                 throw new Error(`Env var "${this.name}" is not set`);
             }
-            return defaultValue;
+            return defVal;
         }
         const map: Record<string,boolean> = config.map ?? (strict ? boolMapStrict : boolMap);
         const parsed = map[val.toLowerCase()];
