@@ -30,7 +30,7 @@ const defaultConfig: FrogeConfig = {
 }
 
 interface ServiceContainer<T> {
-    group: number,
+    level: number,
     up: boolean,
     init: (ctx: FrogeContext<any>) => T|Promise<T>,
     destroy?: (service: T) => void|Promise<void>,
@@ -62,9 +62,9 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
     public up<NewServices extends Record<string, (ctx: FrogeContext<ServiceMap>) => any>>(
         services: NewServices,
     ) {
-        const group = this.map.size;
+        const level = this.map.size;
         for (const key in services) {
-            this.map.set(key, {group, up: false, init: services[key]});
+            this.map.set(key, {level, up: false, init: services[key]});
         }
         return this as FrogeServer<ServiceMap & UnpackAsyncMap<NewServices>>;
     }
@@ -82,11 +82,11 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
         return this;
     }
 
-    public async start() {
-        this.config.verbose && console.log('Starting...');
+    private async startInternal(target?: keyof ServiceMap & string) {
+        const targetLevel: number|undefined = target && this.map.get(target)?.level;
         const startGroups = Map.groupBy(
-            this.map.entries(),
-            ([key, info]) => this.config.parallelStartGroups ? info.group : key,
+            this.map.entries().filter(([key, info]) => key === target || typeof targetLevel === 'undefined' || info.level < targetLevel),
+            ([key, info]) => this.config.parallelStartGroups ? info.level : key,
         );
         for (const group of startGroups.values()) {
             await Promise.all(group.map(([key, container]) => (async () => {
@@ -104,6 +104,20 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
                 this.config.verbose && console.log(`[${key}] Ready`);
             })()));
         }
+    }
+
+    public async only<K extends keyof ServiceMap & string>(key: K): Promise<ServiceMap[K]> {
+        const info = this.map.get(key);
+        if (!info?.up) {
+            this.config.verbose && console.log(`Starting only service '${String(key)}' and dependencies...`);
+            await this.startInternal(key);
+        }
+        return this.services[key];
+    }
+
+    public async start() {
+        this.config.verbose && console.log('Starting...');
+        await this.startInternal();
         return this;
     }
 
@@ -112,36 +126,19 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
         this.config.verbose && console.log(`Stopping (${reasonText ?? 'unspecified reason'}, ${timeoutInfo})...`);
         const stopGroups = Map.groupBy(
             Array.from(this.map.entries()).reverse(),
-            ([key, info]) => this.config.parallelStopGroups ? info.group : key,
+            ([key, info]) => this.config.parallelStopGroups ? info.level : key,
         );
-        const destory = async () => {
-            for (const group of stopGroups.values()) {
-                await Promise.all(group.map(([key, container]) => (async() => {
-                    if (typeof container.destroy === 'undefined' || typeof container.value === 'undefined') {
-                        return;
-                    }
-                    this.config.verbose && console.log(`[${key}] Destroying...`);
-                    await container.destroy(container.value);
-                    container.value = undefined;
-                    container.up = false;
-                    this.config.verbose && console.log(`[${key}] Destroyed`);
-                })()));
-            }
-        };
-        if (this.config.gracefulShutdownTimeoutMs) {
-            let complete = false;
-            const timeout = new Promise<void>((_, reject) => {
-                setTimeout(() => {
-                    if (!complete) {
-                        // This may happen if some of the services are not destroyed properly or took too long to stop
-                        reject(new Error(`Reached timeout ${this.config.gracefulShutdownTimeoutMs}ms`));
-                    }
-                }, this.config.gracefulShutdownTimeoutMs).unref();
-            });
-            await Promise.race([destory(), timeout]);
-            complete = true;
-        } else {
-            await destory();
+        for (const group of stopGroups.values()) {
+            await Promise.all(group.map(([key, container]) => (async() => {
+                if (typeof container.destroy === 'undefined' || typeof container.value === 'undefined') {
+                    return;
+                }
+                this.config.verbose && console.log(`[${key}] Destroying...`);
+                await container.destroy(container.value);
+                container.value = undefined;
+                container.up = false;
+                this.config.verbose && console.log(`[${key}] Destroyed`);
+            })()));
         }
     }
 
@@ -162,8 +159,14 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
     }
 
     public async shutdown(reasonText?: string) {
+        if (this.config.gracefulShutdownTimeoutMs) {
+            setTimeout(() => {
+                console.error(`Reached shutdown timeout ${this.config.gracefulShutdownTimeoutMs}ms, killing...`);
+                process.exit(1);
+            }, this.config.gracefulShutdownTimeoutMs).unref();
+        }
         try {
-            await this.stop(reasonText);
+            await this.stop(reasonText ?? 'shutdown');
         } catch (e) {
             console.error('Shutdown incomplete, killing... Reason:', e);
             process.exit(1);
