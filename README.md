@@ -15,6 +15,8 @@ npm i froge
 * [Basic usage & explanation](#basic-usage--explanation)
 * [Advanced example](#advanced-example)
 * [Start one specific service](#start-one-specific-service)
+* [Inferred context](#inferred-context)
+* [Reverse dependencies (service plugs)](#reverse-dependencies-service-plugs)
 * [Full configuration reference](#full-configuration-reference)
 
 ## Basic usage & explanation
