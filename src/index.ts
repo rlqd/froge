@@ -212,6 +212,8 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
 export type { FrogeServer };
 export { envHelper as envs };
 
+export type { Plug } from './plug';
+
 export type InferContext<S extends FrogeServer<any, any>, K> = S extends FrogeServer<any, infer G> ? K extends keyof G ? FrogeContext<G[K]> : never : never;
 
 export default function froge(): FrogeServer<{},{}> {
