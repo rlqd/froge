@@ -257,6 +257,108 @@ program.command('migrate')
 program.parse();
 ```
 
+## Inferred context
+
+When service has lots of dependencies, you may want to pass the context as is to the service instead.
+
+This is a more invasive approach as your services will have to know about the froge context, but it can be handy sometimes.
+
+server.ts
+```typescript
+import froge, { type InferContext } from "froge";
+import { TestService } from "./test-service";
+
+export const server = froge().up({
+    test1: () => 'test1',
+    test2: () => 'test2',
+}, 'alpha' /* <== */).up({
+    testService: ctx => new TestService(ctx),
+}, 'beta');
+
+// Contains all services from the first group named "alpha"
+export type AlphaContext = InferContext<typeof server, 'alpha' /* <== */>;
+
+// Contains all services from the second group named "beta"
+export type BetaContext = InferContext<typeof server, 'beta'>;
+```
+
+test-service.ts
+```typescript
+import type { AlphaContext } from "./server";
+
+export class TestService {
+    constructor(private ctx: AlphaContext) {}
+
+    public test() {
+        // Services from the first group available
+        return this.ctx.services.test1 + '+' + this.ctx.services.test2;
+    }
+}
+```
+
+## Reverse dependencies (service plugs)
+
+Sometimes the service may need to communicate with a service in the group below.
+
+There are two ways to implement this.
+
+### Event emitter:
+
+```typescript
+import froge from "froge";
+import EventEmitter from 'events';
+
+const server = froge().up({
+    events: () => new EventEmitter(),
+}).up({
+    service1: ctx => ({
+        // there is no service2 in the context, but we can send an event
+        sendFoo: () => ctx.services.events.push('foo', 'bar'),
+    }),
+}).up({
+    service2: ctx => {
+        ctx.services.events.on('foo', data => console.log(data));
+    },
+});
+await server.launch();
+server.services.service1.sendFoo(); // prints "bar"
+```
+
+### Service plugs:
+
+A more complex method would be to add a plug for a service, which itself will be added later.
+
+```typescript
+import froge from "froge";
+
+const server = froge().up({
+    service2: ctx => ctx.plug<{
+        acceptFoo: (data: string) => void,
+    }>(),
+}).up({
+    service1: ctx => ({
+        // there is a plug for service2 in the context, with acceptFoo method available
+        sendFoo: () => {
+            // It must not be accessed before actual service2 started, it will cause an error
+            if (ctx.service.service2.isFrogePlug) {
+                console.log('service2 not ready yet');
+            } else {
+                ctx.services.service2.acceptFoo('bar');
+            }
+        },
+    }),
+}).up({
+    // Normally, existing service can't be overwritten (unless it's a plug)
+    // Type declaration must be compatible with a plug defined above (extra properties are allowed)
+    service2: ctx => ({
+        acceptFoo: (data: string) => console.log(data),
+        somethingElse: () => console.log('Something else!'),
+    }),
+});
+await server.launch();
+server.services.service1.sendFoo(); // prints "bar"
+```
+
 
 ## Full configuration reference
 
@@ -268,6 +370,8 @@ interface FrogeConfig {
     parallelStopGroups: boolean,
     /** Kill the process if shutdown took longer than expected */
     gracefulShutdownTimeoutMs?: number,
+    /** Force exit the current process after shutdown is completed */
+    forceExitAfterShutdown: boolean,
     /** Print info logs */
     verbose: boolean,
 }

@@ -1,5 +1,7 @@
 import envHelper from './env';
+import { type Plug, plug } from './plug';
 
+type MaybePromise<T> = T|Promise<T>;
 type UnpackPromise<T> = T extends Promise<infer R> ? R : T;
 type UnpackAsyncFunction<T> = T extends (...args: any) => infer R ? UnpackPromise<R> : T;
 type UnpackAsyncMap<Map extends {}> = {
@@ -10,7 +12,11 @@ export interface FrogeContext<ServiceMap extends {}> {
     services: ServiceMap,
     envs: typeof envHelper,
     log: (...items: any) => void,
+    plug: <T>() => Plug<T>,
 }
+
+type PlugCallback<T extends keyof ServiceMap, ServiceMap extends {}>
+    = ServiceMap[T] extends Plug<infer S> ? (ctx: FrogeContext<ServiceMap>) => MaybePromise<S> : never;
 
 // note: update in README as well
 export interface FrogeConfig {
@@ -20,24 +26,28 @@ export interface FrogeConfig {
     parallelStopGroups: boolean,
     /** Kill the process if shutdown took longer than expected */
     gracefulShutdownTimeoutMs?: number,
+    /** Force exit the current process after shutdown is completed */
+    forceExitAfterShutdown: boolean,
     /** Print info logs */
     verbose: boolean,
 }
 const defaultConfig: FrogeConfig = {
     parallelStartGroups: true,
     parallelStopGroups: true,
+    forceExitAfterShutdown: false,
     verbose: true,
 }
 
 interface ServiceContainer<T> {
     level: number,
+    group?: string,
     up: boolean,
-    init: (ctx: FrogeContext<any>) => T|Promise<T>,
-    destroy?: (service: T) => void|Promise<void>,
+    init: (ctx: FrogeContext<any>) => MaybePromise<T>,
+    destroy?: (service: T) => MaybePromise<void>,
     value?: T,
 }
 
-class FrogeServer<ServiceMap extends Record<string,any>> {
+class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends Record<string,Record<string,any>>> {
     private map: Map<string, ServiceContainer<any>> = new Map();
     private config: FrogeConfig = {...defaultConfig};
 
@@ -55,22 +65,34 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
             if (!service.up) {
                 throw new Error(`Can't access service "${prop}" before it was started`);
             }
+            if (service.value?.isFrogePlug) {
+                throw new Error(`Can't access service "${prop}" - it's a plug`);
+            }
             return service.value;
         },
     }) as ServiceMap;
 
-    public up<NewServices extends Record<string, (ctx: FrogeContext<ServiceMap>) => any>>(
+    public up<NewServices extends (
+        {
+            // Don't allow to override existing properties unless it's a plug
+            [T in keyof ServiceMap]?: PlugCallback<T, ServiceMap>
+        } & Record<string, (ctx: FrogeContext<ServiceMap>) => any>
+    ), GroupKey extends string|undefined>(
         services: NewServices,
+        group?: GroupKey,
     ) {
         const level = this.map.size;
         for (const key in services) {
-            this.map.set(key, {level, up: false, init: services[key]});
+            this.map.set(key, {level, group, up: false, init: services[key]});
         }
-        return this as FrogeServer<ServiceMap & UnpackAsyncMap<NewServices>>;
+        return this as FrogeServer<
+            ServiceMap & UnpackAsyncMap<NewServices>,
+            ServiceGroups & (GroupKey extends string ? Record<GroupKey, ServiceMap & UnpackAsyncMap<NewServices>> : {})
+        >;
     }
 
     public down<NewDestroyers extends {
-        [T in keyof ServiceMap]?: (service: ServiceMap[T]) => void|Promise<void>
+        [T in keyof ServiceMap]?: (service: ServiceMap[T]) => MaybePromise<void>
     }>(destroyers: NewDestroyers) {
         for (const key in destroyers) {
             const service = this.map.get(key);
@@ -95,13 +117,23 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
                     return;
                 }
                 this.config.verbose && console.log(`[${key}] Initializing...`);
-                container.value = await container.init({
+                const value = container.init({
                     services: this.services,
                     envs: envHelper,
                     log: (...items: any) => this.config.verbose && console.log(`[${key}]`, ...items),
+                    plug: <T>() => plug<T>(key),
                 });
+                if (value instanceof Promise) {
+                    container.value = await value;
+                } else {
+                    container.value = value;
+                }
                 container.up = true;
-                this.config.verbose && console.log(`[${key}] Ready`);
+                if (container.value?.isFrogePlug) {
+                    console.warn(`[${key}] Got a plug instead of the service`);
+                } else {
+                    this.config.verbose && console.log(`[${key}] Ready`);
+                }
             })()));
         }
     }
@@ -167,6 +199,9 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
         }
         try {
             await this.stop((reasonText ?? 'shutdown') + ', ' + timeoutInfo);
+            if (this.config.forceExitAfterShutdown) {
+                process.exit(0);
+            }
         } catch (e) {
             console.error('Shutdown incomplete, killing... Reason:', e);
             process.exit(1);
@@ -177,6 +212,8 @@ class FrogeServer<ServiceMap extends Record<string,any>> {
 export type { FrogeServer };
 export { envHelper as envs };
 
-export default function froge(): FrogeServer<{}> {
+export type InferContext<S extends FrogeServer<any, any>, K> = S extends FrogeServer<any, infer G> ? K extends keyof G ? FrogeContext<G[K]> : never : never;
+
+export default function froge(): FrogeServer<{},{}> {
     return new FrogeServer();
 }
