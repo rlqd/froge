@@ -1,6 +1,8 @@
 import envHelper from './env';
 import { type Plug, plug } from './plug';
 
+const AsyncFunction = async function () {}.constructor;
+
 type MaybePromise<T> = T|Promise<T>;
 type UnpackPromise<T> = T extends Promise<infer R> ? R : T;
 type UnpackAsyncFunction<T> = T extends (...args: any) => infer R ? UnpackPromise<R> : T;
@@ -12,11 +14,11 @@ export interface FrogeContext<ServiceMap extends {}> {
     services: ServiceMap,
     envs: typeof envHelper,
     log: (...items: any) => void,
-    plug: <T>() => Plug<T>,
+    plug: <T extends NonNullable<unknown>>() => Plug<T>,
 }
 
 type PlugCallback<T extends keyof ServiceMap, ServiceMap extends {}>
-    = ServiceMap[T] extends Plug<infer S> ? (ctx: FrogeContext<ServiceMap>) => MaybePromise<S> : never;
+    = ServiceMap[T] extends Plug<infer S> ? (ctx: FrogeContext<ServiceMap>) => MaybePromise<() => S> : never;
 
 // note: update in README as well
 export interface FrogeConfig {
@@ -45,6 +47,7 @@ interface ServiceContainer<T> {
     init: (ctx: FrogeContext<any>) => MaybePromise<T>,
     destroy?: (service: T) => MaybePromise<void>,
     value?: T,
+    plug?: Plug<T>,
 }
 
 class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends Record<string,Record<string,any>>> {
@@ -62,11 +65,11 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
             if (typeof service === 'undefined') {
                 return;
             }
+            if (service.plug) {
+                return service.plug;
+            }
             if (!service.up) {
                 throw new Error(`Can't access service "${prop}" before it was started`);
-            }
-            if (service.value?.isFrogePlug) {
-                throw new Error(`Can't access service "${prop}" - it's a plug`);
             }
             return service.value;
         },
@@ -83,7 +86,35 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
     ) {
         const level = this.map.size;
         for (const key in services) {
-            this.map.set(key, {level, group, up: false, init: services[key]});
+            const existing = this.map.get(key);
+            let maybePlug: any;
+            if (existing) {
+                const errorMsg = `Trying to override existing service ${key} from group ${existing.group ?? 'undefined'}.`
+                    + '\nOnly plugs can be overridden. Function defining a plug must not be async and must only use ctx.plug() method.'
+                    + '\nExample: ctx => ctx.plug<MyService>()';
+                if (existing.init instanceof AsyncFunction) {
+                    throw new Error(errorMsg + `\nInit function for ${key} is async`);
+                }
+                const plugContextMock = new Proxy({}, {
+                    get(_, prop: string) {
+                        if (prop === 'plug') {
+                            return plug;
+                        }
+                        throw new Error(errorMsg + `\nInit function for ${key} tried accessing ctx.${prop}`);
+                    }
+                }) as FrogeContext<ServiceMap>;
+                try {
+                    maybePlug = existing.init(plugContextMock);
+                } catch (e) {
+                    throw new Error(errorMsg + `\nInit function for ${key} raised an error: ${e}`);
+                }
+                if (!maybePlug?.isFrogePlug) {
+                    throw new Error(errorMsg + `\nInit function for ${key} didn't return a Froge plug`);
+                }
+                // Ok, we are satisfied, it's definitely a plug. Deleted to ensure correct startup order.
+                this.map.delete(key);
+            }
+            this.map.set(key, {level, group, up: false, init: services[key], plug: maybePlug});
         }
         return this as FrogeServer<
             ServiceMap & UnpackAsyncMap<NewServices>,
@@ -128,6 +159,9 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
                 } else {
                     container.value = value;
                 }
+                if (container.plug) {
+                    (container.plug as any).__startedService = container.value;
+                }
                 container.up = true;
                 if (container.value?.isFrogePlug) {
                     console.warn(`[${key}] Got a plug instead of the service`);
@@ -167,6 +201,9 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
                 this.config.verbose && console.log(`[${key}] Destroying...`);
                 await container.destroy(container.value);
                 container.value = undefined;
+                if (container.plug) {
+                    (container.plug as any).__startedService = undefined;
+                }
                 container.up = false;
                 this.config.verbose && console.log(`[${key}] Destroyed`);
             })()));

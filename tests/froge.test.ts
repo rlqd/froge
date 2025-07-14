@@ -192,9 +192,9 @@ describe('Froge', () => {
             }, 50)),
             test2: ctx => ctx.plug<string>(),
         }).up({
-            test2: () => {
+            test2: ctx => {
                 startSequence.push(2);
-                return 'test2';
+                return () => 'test2';
             },
             test3: ctx => {
                 startSequence.push(3);
@@ -204,7 +204,7 @@ describe('Froge', () => {
                 startSequence.push(4);
                 return {
                     value: 'test4',
-                    foo: () => ctx.services.test2,
+                    foo: () => ctx.services.test2(),
                 };
             },
         }).down({
@@ -217,13 +217,64 @@ describe('Froge', () => {
         await server.start();
         assert.deepEqual(startSequence, [1, 2, 3, 4]);
         assert.equal(server.services.test1, 'test1');
-        assert.equal(server.services.test2, 'test2');
+        assert.equal(server.services.test2(), 'test2');
         assert.equal(server.services.test3, 'test3, dep test1');
         assert.equal(server.services.test4.value, 'test4');
         assert.equal(server.services.test4.foo(), 'test2');
 
         await server.stop();
         assert.deepEqual(stopSequence, [4, 3, 2, 1]);
+    });
+
+    it('ctx.plug(): plug overriden after referenced', async () => {
+        const startSequence: number[] = [];
+        const stopSequence: number[] = [];
+
+        const server = froge().configure({
+            verbose: false,
+        }).up({
+            test1: () => new Promise<string>(resolve => setTimeout(() => {
+                startSequence.push(1);
+                resolve('test1');
+            }, 50)),
+            test2: ctx => ctx.plug<string>(),
+        }).up({
+            test3: ctx => {
+                startSequence.push(3);
+                return 'test3, dep ' + ctx.services.test1;
+            },
+            test4: ctx => {
+                startSequence.push(4);
+                function createTest4(test2: () => string) {
+                    return {
+                        value: 'test4',
+                        foo: () => test2(),
+                    };
+                }
+                return createTest4(ctx.services.test2);
+            },
+        }).up({
+            test2: () => {
+                startSequence.push(2);
+                return () => 'test2';
+            },
+        }).down({
+            test1: service => { stopSequence.push(1); },
+            test2: service => { stopSequence.push(2); },
+            test3: service => { stopSequence.push(3); },
+            test4: service => { stopSequence.push(4); },
+        });
+
+        await server.start();
+        assert.deepEqual(startSequence, [1, 3, 4, 2]);
+        assert.equal(server.services.test1, 'test1');
+        assert.equal(server.services.test2(), 'test2');
+        assert.equal(server.services.test3, 'test3, dep test1');
+        assert.equal(server.services.test4.value, 'test4');
+        assert.equal(server.services.test4.foo(), 'test2');
+
+        await server.stop();
+        assert.deepEqual(stopSequence, [2, 4, 3, 1]);
     });
 
     it('ctx.plug(): can not access plug', async () => {
@@ -234,7 +285,7 @@ describe('Froge', () => {
         });
 
         await server.start();
-        assert.throws(() => { console.log(server.services.test); });
+        assert.throws(() => { console.log(server.services.test()); });
     });
 
     it('launch(): handles server lifecycle', async () => {

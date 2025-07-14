@@ -345,20 +345,26 @@ const server = froge().up({
             if (ctx.service.service2.isFrogePlug) {
                 console.log('service2 not ready yet');
             } else {
-                ctx.services.service2.acceptFoo('bar');
+                // Note! service2 is called as a function to access the service
+                ctx.services.service2().acceptFoo('bar');
             }
         },
     }),
 }).up({
     // Normally, existing service can't be overwritten (unless it's a plug)
     // Type declaration must be compatible with a plug defined above (extra properties are allowed)
-    service2: ctx => ({
-        acceptFoo: (data: string) => console.log(data),
-        somethingElse: () => console.log('Something else!'),
-    }),
+    service2: ctx => {
+        const myService = {
+            acceptFoo: (data: string) => console.log(data),
+            somethingElse: () => console.log('Something else!'),
+        };
+        // Note! Plug services must return a function
+        return () => myService;
+    },
 });
 await server.launch();
 server.services.service1.sendFoo(); // prints "bar"
+server.services.service2().somethingElse();
 ```
 
 
