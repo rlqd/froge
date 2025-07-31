@@ -214,7 +214,10 @@ describe('Froge', () => {
             test4: service => { stopSequence.push(4); },
         });
 
+        assert.equal(false, server.services.test2.isReady);
         await server.start();
+        assert.equal(true, server.services.test2.isReady);
+
         assert.deepEqual(startSequence, [1, 2, 3, 4]);
         assert.equal(server.services.test1, 'test1');
         assert.equal(server.services.test2(), 'test2');
@@ -265,7 +268,10 @@ describe('Froge', () => {
             test4: service => { stopSequence.push(4); },
         });
 
+        assert.equal(false, server.services.test2.isReady);
         await server.start();
+        assert.equal(true, server.services.test2.isReady);
+
         assert.deepEqual(startSequence, [1, 3, 4, 2]);
         assert.equal(server.services.test1, 'test1');
         assert.equal(server.services.test2(), 'test2');
@@ -285,6 +291,7 @@ describe('Froge', () => {
         });
 
         await server.start();
+        assert.ok(!server.services.test.isReady);
         assert.throws(() => { console.log(server.services.test()); });
     });
 

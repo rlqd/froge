@@ -92,6 +92,10 @@ class EnvWrapper {
         return new URL(this.string(defaultValue));
     }
 
+    public urls(defaultValue?: string): string {
+        return this.url(defaultValue).toString();
+    }
+
     public ip(defaultValue?: string): string {
         const val = this.string(defaultValue);
         if (!net.isIP(val)) {

@@ -113,6 +113,14 @@ describe('Envs', () => {
         delete process.env.TEST_URL;
     });
 
+    it('urls(): parses valid URL to string', () => {
+        process.env.TEST_URL = 'https://example.com/foo';
+        const u = envs.TEST_URL.urls();
+        assert.equal('string', typeof u);
+        assert.equal(u, 'https://example.com/foo');
+        delete process.env.TEST_URL;
+    });
+
     it('url(): throws on invalid URL', () => {
         process.env.TEST_URL = 'notaurl';
         assert.throws(() => envs.TEST_URL.url());

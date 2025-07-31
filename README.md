@@ -44,7 +44,7 @@ froge()
         },
         service2: ctx => {
             // ctx contains useful helpers like env var helpers or server-specific log
-            ctx.log("I'm starting on " + ctx.env.OS.string("unknown" /* default */));
+            ctx.log("I'm starting on " + ctx.envs.OS.string("unknown" /* default */));
             return {
                 doSomethingElse: () => console.log('I did something else!'),
             };
@@ -342,7 +342,7 @@ const server = froge().up({
         // there is a plug for service2 in the context, with acceptFoo method available
         sendFoo: () => {
             // It must not be accessed before actual service2 started, it will cause an error
-            if (ctx.service.service2.isFrogePlug) {
+            if (!ctx.service.service2.isReady) {
                 console.log('service2 not ready yet');
             } else {
                 // Note! service2 is called as a function to access the service

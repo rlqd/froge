@@ -1,5 +1,8 @@
 
-export type Plug<T> = (() => T) & {isFrogePlug: true};
+export type Plug<T> = (() => T) & {
+    isFrogePlug: true,
+    isReady: boolean,
+};
 
 export function plug<T>(key: string): Plug<T> {
     const plug = (function plugResolver() {
@@ -8,7 +11,19 @@ export function plug<T>(key: string): Plug<T> {
             return service();
         }
         throw new Error(`Trying to access uninitialized plug for service '${key}'`);
-    }) as any;
-    plug.isFrogePlug = true;
-    return plug as Plug<T>;
+    });
+    Object.defineProperties(plug, {
+        __startedService: {
+            writable: true,
+        },
+        isReady: {
+            get: function () {
+                return typeof this.__startedService !== 'undefined';
+            },
+        },
+        isFrogePlug: {
+            get: () => true,
+        },
+    });
+    return Object.seal(plug) as Plug<T>;
 }
