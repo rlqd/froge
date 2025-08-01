@@ -1,6 +1,7 @@
 {
   "name": "froge",
-  "version": "1.6.0",
+  "version": "1.6.1",
+  "files": ["dist", "froge.webp"],
   "exports": {
     ".": "./dist/index.js"
   },
@@ -24,7 +25,7 @@
   },
   "author": "rlqd.dev",
   "license": "MIT",
-  "description": "",
+  "description": "Jump-start your NodeJS/Bun/... services with dependency & lifecycle management and handy helper methods",
   "devDependencies": {
     "@types/node": "^22.15.18",
     "rimraf": "^6.0.1",

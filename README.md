@@ -1,14 +1,17 @@
 # Froge
 
-![froge](froge.webp)
+Jump-start your NodeJS/Bun/... services with dependency & lifecycle management and handy helper methods.
 
-Jump-start your NodeJS services with dependency & lifecycle management and handy helper methods.
+![froge](froge.webp)
 
 Froge is Typescript-focused and allows type safe access to services in the context.
 
-```
+```sh
 npm i froge
 ```
+
+<a href="https://www.npmjs.com/package/froge"><img alt="NPM Version" src="https://img.shields.io/npm/v/froge"></a>
+<a href="https://www.npmjs.com/package/froge"><img alt="NPM Downloads" src="https://img.shields.io/npm/dm/froge"></a>
 
 ## Learn more
 
@@ -26,9 +29,11 @@ Froge lets you define service groups which depend on each other.
 
 Calling `froge()` creates a Froge Server, which can be populated with services:
 
-* `up()` defines how to start the service
+* `up()` defines how to start services
 * `down()` defines how to stop them
 * `use()` copies services from another server
+
+Services are stopped in the reverse order.
 
 ```typescript
 import froge from 'froge';
@@ -40,10 +45,10 @@ const server = froge().up({
     service3: ctx => `I am service 3 and I depend on "${ctx.services.service1}"`,
 }).use(
     froge().up({
-        externalService: ctx => 'I am a service from other instance',
+        externalService: ctx => 'I am a service from another instance',
     })
 ).up({
-    service4: ctx => `I depend on other instance service "${ctx.services.externalService}"`,
+    service4: ctx => `I depend on another instance service "${ctx.services.externalService}"`,
 });
 
 server.down({
