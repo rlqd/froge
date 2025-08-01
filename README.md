@@ -2,9 +2,9 @@
 
 ![froge](froge.webp)
 
-Jump-start your NodeJS services with dependency & lifecycle management with handy helper methods.
+Jump-start your NodeJS services with dependency & lifecycle management and handy helper methods.
 
-Typescript-friendly with service types inferred!
+Froge is Typescript-focused and allows type safe access to services in the context.
 
 ```
 npm i froge
@@ -12,31 +12,67 @@ npm i froge
 
 ## Learn more
 
-* [Basic usage & explanation](#basic-usage--explanation)
+* [Basic usage](#basic-usage)
+* [Explained example](#explained-example)
 * [Advanced example](#advanced-example)
 * [Start one specific service](#start-one-specific-service)
 * [Inferred context](#inferred-context)
 * [Reverse dependencies (service plugs)](#reverse-dependencies-service-plugs)
 * [Full configuration reference](#full-configuration-reference)
 
-## Basic usage & explanation
+## Basic usage
+
+Froge lets you define service groups which depend on each other.
+
+Calling `froge()` creates a Froge Server, which can be populated with services:
+
+* `up()` defines how to start the service
+* `down()` defines how to stop them
+* `use()` copies services from another server
+
+```typescript
+import froge from 'froge';
+
+const server = froge().up({
+    service1: ctx => 'I am service 1',
+    service2: async ctx => await new Promise(resolve => resolve('I am service 2')),
+}).up({
+    service3: ctx => `I am service 3 and I depend on "${ctx.services.service1}"`,
+}).use(
+    froge().up({
+        externalService: ctx => 'I am a service from other instance',
+    })
+).up({
+    service4: ctx => `I depend on other instance service "${ctx.services.externalService}"`,
+});
+
+server.down({
+    service1: service1 => console.log(`I'm stopping "${service1}"`),
+    service4: async service4 => await new Promise(resolve => {
+        console.log(`I'm stopping "${service4}"`);
+        resolve();
+    }),
+})
+
+server.launch()
+    .then(() => console.log('Server is ready'));
+
+```
+
+## Explained example
 
 ```typescript
 import froge from 'froge';
 
 froge()
-    // Change some config options
     .configure({
-        // By default, Froge will handle Ctrl+C
+        // If started with launch() method, Froge will handle Ctrl+C
         // It's recommended to set timeout to kill the app if it didn't stop on it's own
         gracefulShutdownTimeoutMs: 15000,
     })
-    // Define how to start the services
     .up({
         // Services within same group start and stop in parallel by default
         service1: () => {
-            // This method can be async and init the service (e.g. connect to DB)
-            // We will just return the mock object
             return {
                 doSomething: () => console.log('I did something!'),
                 stop: () => console.log('I stopped'),

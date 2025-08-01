@@ -295,6 +295,88 @@ describe('Froge', () => {
         assert.throws(() => { console.log(server.services.test()); });
     });
 
+    it('up(): trying to override existing service', async () => {
+        try {
+            froge().up({
+                test: () => 'test',
+            }).up({
+                test: () => 'test2',
+            } as any);
+            assert.fail('must throw');
+        } catch (e: any) {
+            assert.ok(e.message.startsWith('Trying to override existing service test'));
+        }
+    });
+
+    it('up(): trying to override existing group', async () => {
+        try {
+            froge().up({
+                test: () => 'test',
+            }, 'alpha').up({
+                test2: () => 'test2',
+            }, 'alpha');
+            assert.fail('must throw');
+        } catch (e: any) {
+            assert.equal(e.message, 'Group with key alpha already exists, trying to add new group with the same name (test2)');
+        }
+    });
+
+    it('use(): imports services from other instance', async () => {
+        const other = froge().up({
+            test: ctx => 'test',
+        });
+
+        const server = froge()
+            .configure({
+                verbose: false,
+            })
+            .up({
+                something: ctx => 'something',
+            })
+            .use(other)
+            .up({
+                test2: ctx => ({
+                    getTest: () => ctx.services.test,
+                }),
+            });
+
+        await server.start();
+
+        assert.equal(server.services.something, 'something');
+        assert.equal(server.services.test, 'test');
+        assert.equal(server.services.test2.getTest(), 'test');
+    });
+
+    it('use(): trying to override existing service', async () => {
+        try {
+            froge().up({
+                test: () => 'test',
+            }).use(
+                froge().up({
+                    test: () => 'test2',
+                }) as any
+            );
+            assert.fail('must throw');
+        } catch (e: any) {
+            assert.equal(e.message, 'Trying to override existing service test by a service from another instance');
+        }
+    });
+
+    it('use(): trying to override existing group', async () => {
+        try {
+            froge().up({
+                test: () => 'test',
+            }, 'alpha').use(
+                froge().up({
+                    test2: () => 'test2',
+                }, 'alpha')
+            );
+            assert.fail('must throw');
+        } catch (e: any) {
+            assert.equal(e.message, 'Trying to override existing group alpha by a group from another instance (test2)');
+        }
+    });
+
     it('launch(): handles server lifecycle', async () => {
         const startSequence: number[] = [];
         const stopSequence: number[] = [];

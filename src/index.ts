@@ -52,6 +52,7 @@ interface ServiceContainer<T> {
 
 class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends Record<string,Record<string,any>>> {
     private map: Map<string, ServiceContainer<any>> = new Map();
+    private groups: Set<string> = new Set();
     private config: FrogeConfig = {...defaultConfig};
 
     public configure(config: Partial<FrogeConfig>) {
@@ -84,6 +85,9 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
         services: NewServices,
         group?: GroupKey,
     ) {
+        if (group && this.groups.has(group)) {
+            throw new Error(`Group with key ${group} already exists, trying to add new group with the same name (${Object.keys(services).join(', ')})`);
+        }
         const level = this.map.size;
         for (const key in services) {
             const existing = this.map.get(key);
@@ -116,9 +120,10 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
             }
             this.map.set(key, {level, group, up: false, init: services[key], plug: maybePlug});
         }
+        group && this.groups.add(group);
         return this as FrogeServer<
             ServiceMap & UnpackAsyncMap<NewServices>,
-            ServiceGroups & (GroupKey extends string ? Record<GroupKey, ServiceMap & UnpackAsyncMap<NewServices>> : {})
+            ServiceGroups & (GroupKey extends string ? (GroupKey extends keyof ServiceGroups ? never : Record<GroupKey, ServiceMap & UnpackAsyncMap<NewServices>>) : {})
         >;
     }
 
@@ -133,6 +138,38 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
             service.destroy = destroyers[key];
         }
         return this;
+    }
+
+    public use<
+        ServiceMap2 extends {
+            // Don't allow overriding existing services
+            [T in keyof ServiceMap]?: never
+        } & Record<string,any>,
+        ServiceGroups2 extends {
+            // Don't allow overriding existing groups
+            [T in keyof ServiceGroups]?: never
+        } & Record<string,Record<string,any>>
+    >(
+        other: FrogeServer<ServiceMap2, ServiceGroups2>,
+    ) {
+        for (const [key, service] of other.map.entries()) {
+            if (this.map.has(key)) {
+                throw new Error(`Trying to override existing service ${key} by a service from another instance`);
+            }
+            if (service.group && this.groups.has(service.group)) {
+                const groupServices = other.map.entries()
+                    .filter(([_,v]) => v.group === service.group)
+                    .map(([k]) => k)
+                    .toArray();
+                throw new Error(`Trying to override existing group ${service.group} by a group from another instance (${groupServices.join(', ')})`);
+            }
+            const level = this.map.size;
+            this.map.set(key, {...service, level});
+        }
+        for (const group of other.groups) {
+            this.groups.add(group);
+        }
+        return this as FrogeServer<ServiceMap & ServiceMap2, ServiceGroups & ServiceGroups2>;
     }
 
     private async startInternal(target?: keyof ServiceMap & string) {
