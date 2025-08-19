@@ -16,11 +16,11 @@ npm i froge
 ## Learn more
 
 * [Basic usage](#basic-usage)
-* [Explained example](#explained-example)
 * [Advanced example](#advanced-example)
 * [Start one specific service](#start-one-specific-service)
 * [Inferred context](#inferred-context)
 * [Reverse dependencies (service plugs)](#reverse-dependencies-service-plugs)
+* [Plugins and plugin development](#plugins-and-plugin-development)
 * [Full configuration reference](#full-configuration-reference)
 
 ## Basic usage
@@ -31,23 +31,27 @@ Calling `froge()` creates a Froge Server, which can be populated with services:
 
 * `up()` defines how to start services
 * `down()` defines how to stop them
-* `use()` copies services from another server
+* `use()` adds services from another server instance (effectively, a [plugin](#plugins-and-plugin-development))
 
 Services are stopped in the reverse order.
 
 ```typescript
 import froge from 'froge';
 
-const server = froge().up({
+const plugin = froge().up({
+    externalService: ctx => 'I am a service from another instance',
+});
+
+const server = froge()
+.up({
     service1: ctx => 'I am service 1',
     service2: async ctx => await new Promise(resolve => resolve('I am service 2')),
-}).up({
+})
+.up({
     service3: ctx => `I am service 3 and I depend on "${ctx.services.service1}"`,
-}).use(
-    froge().up({
-        externalService: ctx => 'I am a service from another instance',
-    })
-).up({
+})
+.use(plugin)
+.up({
     service4: ctx => `I depend on another instance service "${ctx.services.externalService}"`,
 });
 
@@ -62,90 +66,6 @@ server.down({
 server.launch()
     .then(() => console.log('Server is ready'));
 
-```
-
-## Explained example
-
-```typescript
-import froge from 'froge';
-
-froge()
-    .configure({
-        // If started with launch() method, Froge will handle Ctrl+C
-        // It's recommended to set timeout to kill the app if it didn't stop on it's own
-        gracefulShutdownTimeoutMs: 15000,
-    })
-    .up({
-        // Services within same group start and stop in parallel by default
-        service1: () => {
-            return {
-                doSomething: () => console.log('I did something!'),
-                stop: () => console.log('I stopped'),
-            };
-        },
-        service2: ctx => {
-            // ctx contains useful helpers like env var helpers or server-specific log
-            ctx.log("I'm starting on " + ctx.envs.OS.string("unknown" /* default */));
-            return {
-                doSomethingElse: () => console.log('I did something else!'),
-            };
-        },
-    })
-    // Add more services, which depend on the first group
-    // They will only start after the first group is ready
-    .up({
-        foo: ctx => {
-            return setInterval(() => {
-                // Previous services became available in the context
-                // Types are inherited automatically
-                ctx.services.service1.doSomething();
-                ctx.services.service2.doSomethingElse();
-            }, ctx.envs.SOMETHING_INTERVAL_MS.number(1000))
-        },
-    })
-    // Define here how the services should be stopped (if needed)
-    .down({
-        service1: service => service.stop(),
-        foo: interval => clearInterval(interval),
-    })
-    // Start services and handle shutdown when requested
-    .launch()
-        .then(froge => {
-            console.log("I'm ready!");
-            // Services can be accessed after Froge has started, everything is properly typed
-            froge.services.service1; // { doSomething: () => void, stop: () => void }
-        });
-```
-
-Which will output the following when started:
-
-```
-Starting...
-[service1] Initializing...
-[service2] Initializing...
-[service2] I'm starting on Windows_NT
-[service1] Ready
-[service2] Ready
-[foo] Initializing...
-[foo] Ready
-I'm ready!
-
-I did something!
-I did something else!
-I did something!
-I did something else!
-...
-
-Ctrl+C
-
-Stopping (SIGINT, timeout: 15000ms)...
-[foo] Destroying...
-[foo] Destroyed
-[service2] Destroying...
-[service1] Destroying...
-[service2] Destroyed
-[service1] Destroyed
-Stop complete
 ```
 
 ## Advanced example
@@ -164,20 +84,20 @@ import type { Server } from 'http';
 
 froge()
     .configure({
+        // If started with launch() method, Froge will handle Ctrl+C
+        // It's recommended to set timeout to kill the app if it didn't stop on it's own
         gracefulShutdownTimeoutMs: 15000,
         // If you don't want to see console output
         verbose: false,
     })
     // First group of the services
     .up({
-        db: async ctx => {
-            return await mysql.createPool({
-                // Use handy helpers for validating common env var values
-                host: ctx.envs.MYSQL_HOST.string('localhost'),
-                port: ctx.envs.MYSQL_PORT.port(3306),
-                // ...
-            });
-        },
+        db: ctx => mysql.createPool({
+            // Use handy helpers for validating common env var values
+            host: ctx.envs.MYSQL_HOST.string('localhost'),
+            port: ctx.envs.MYSQL_PORT.port(3306),
+            // ...
+        }),
         hourlyJoke: async ctx => {
             const fetchJoke = async () => (await fetch(`https://v2.jokeapi.dev/joke/${ctx.envs.JOKE_TOPIC.string('Programming')}?format=txt&type=single`)).text();
             let joke = await fetchJoke();
@@ -406,6 +326,65 @@ const server = froge().up({
 await server.launch();
 server.services.service1.sendFoo(); // prints "bar"
 server.services.service2().somethingElse();
+```
+
+
+## Plugins and plugin development
+
+Froge server `use()` method can be used for code organisation (split server into parts),
+but it is also useful to develop plugins.
+
+A callback can be passed to `use()` method, which allows to construct the plugin while having access
+to services in the main instance.
+
+Below is an example of a simple ExpressJS plugin:
+
+```typescript
+import type { Server } from 'http';
+
+function createExpressServer(app: any, port: number) {
+    return froge.up({
+        http: async ctx => {
+            let server: Server;
+            await new Promise<void>((resolve, reject) => {
+                server = app.listen(port, err => err ? reject(err) : resolve());
+            });
+            return server!;
+        },
+    }).down({
+        http: async service => service.close(),
+    });
+}
+```
+
+And how it can be used:
+
+```typescript
+import froge from 'froge';
+import mysql from 'mysql2/promise';
+import express from 'express';
+
+const server = froge().up({
+    db: ctx => mysql.createPool({
+        host: ctx.envs.MYSQL_HOST.string('localhost'),
+        port: ctx.envs.MYSQL_PORT.port(3306),
+        // ...
+    }),
+}).use(ctx => {
+    // DB pool from a previous step
+    const db = ctx.services.db;
+    // Normal ExpressJS app
+    const app = express()
+        .post('/increment', async (req, res) => {
+            await db.query('UPDATE counts SET amount = amount + 1 WHERE key = ?', [req.query.key]);
+        });
+    // Create the plugin (server, which will start/stop express for us)
+    return createExpressServer(app, ctx.envs.LISTEN_PORT.port(8080));
+}).down({
+    db: pool => pool.end(),
+});
+
+await server.launch();
 ```
 
 

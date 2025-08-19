@@ -10,9 +10,12 @@ type UnpackAsyncMap<Map extends {}> = {
     [K in keyof Map]: UnpackAsyncFunction<Map[K]>;
 };
 
-export interface FrogeContext<ServiceMap extends {}> {
+export interface CommonFrogeContext<ServiceMap extends {}> {
     services: ServiceMap,
     envs: typeof envHelper,
+}
+
+export interface FrogeContext<ServiceMap extends {}> extends CommonFrogeContext<ServiceMap> {
     log: (...items: any) => void,
     plug: <T extends NonNullable<unknown>>() => Plug<T>,
 }
@@ -48,12 +51,25 @@ interface ServiceContainer<T> {
     destroy?: (service: T) => MaybePromise<void>,
     value?: T,
     plug?: Plug<T>,
+    serverSymbol: Symbol,
 }
+
+type PluginFactory<ServiceMapIn extends {}, ServiceMapOut extends {}>
+    = (ctx: CommonFrogeContext<ServiceMapIn>) => FrogeServer<ServiceMapOut, any> | Promise<FrogeServer<ServiceMapOut, any>>;
+
+interface PluginContainer {
+    factory: PluginFactory<any, any>,
+    pushConfig: boolean,
+    server?: FrogeServer<any,any>,
+};
 
 class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends Record<string,Record<string,any>>> {
     private map: Map<string, ServiceContainer<any>> = new Map();
     private groups: Set<string> = new Set();
     private config: FrogeConfig = {...defaultConfig};
+    private plugins = new Map<number, PluginContainer[]>;
+    private currentLevel: number = -1;
+    private symbol = Symbol();
 
     public configure(config: Partial<FrogeConfig>) {
         this.config = {...this.config, ...config};
@@ -64,7 +80,7 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
         get: (_, prop: string) => {
             const service = this.map.get(prop);
             if (typeof service === 'undefined') {
-                return;
+                throw new Error(`Can't access service "${prop}", make sure it exists and started`);
             }
             if (service.plug) {
                 return service.plug;
@@ -88,7 +104,7 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
         if (group && this.groups.has(group)) {
             throw new Error(`Group with key ${group} already exists, trying to add new group with the same name (${Object.keys(services).join(', ')})`);
         }
-        const level = this.map.size;
+        const level = ++this.currentLevel;
         for (const key in services) {
             const existing = this.map.get(key);
             let maybePlug: any;
@@ -118,7 +134,7 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
                 // Ok, we are satisfied, it's definitely a plug. Deleted to ensure correct startup order.
                 this.map.delete(key);
             }
-            this.map.set(key, {level, group, up: false, init: services[key], plug: maybePlug});
+            this.map.set(key, {level, group, up: false, init: services[key], plug: maybePlug, serverSymbol: this.symbol});
         }
         group && this.groups.add(group);
         return this as FrogeServer<
@@ -144,74 +160,139 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
         ServiceMap2 extends {
             // Don't allow overriding existing services
             [T in keyof ServiceMap]?: never
-        } & Record<string,any>,
-        ServiceGroups2 extends {
-            // Don't allow overriding existing groups
-            [T in keyof ServiceGroups]?: never
-        } & Record<string,Record<string,any>>
+        } & Record<string,any>
     >(
-        other: FrogeServer<ServiceMap2, ServiceGroups2>,
+        other: FrogeServer<ServiceMap2,any> | PluginFactory<ServiceMap,ServiceMap2>,
+        /** Change plugin config to match main instance */
+        pushConfig: boolean = true,
     ) {
-        for (const [key, service] of other.map.entries()) {
-            if (this.map.has(key)) {
-                throw new Error(`Trying to override existing service ${key} by a service from another instance`);
-            }
-            if (service.group && this.groups.has(service.group)) {
-                const groupServices = other.map.entries()
-                    .filter(([_,v]) => v.group === service.group)
-                    .map(([k]) => k)
-                    .toArray();
-                throw new Error(`Trying to override existing group ${service.group} by a group from another instance (${groupServices.join(', ')})`);
-            }
-            const level = this.map.size;
-            this.map.set(key, {...service, level});
+        const container: PluginContainer = {
+            factory: other instanceof FrogeServer ? () => other : other,
+            pushConfig,
+        };
+        const after = this.currentLevel;
+        if (this.plugins.has(after)) {
+            this.plugins.get(after)?.push(container);
+        } else {
+            this.plugins.set(after, [container]);
         }
-        for (const group of other.groups) {
-            this.groups.add(group);
+        return this as FrogeServer<ServiceMap & ServiceMap2, ServiceGroups>;
+    }
+
+    private async startPlugins(level: number) {
+        const groupPlugins = this.plugins.get(level);
+        if (!groupPlugins) {
+            return;
         }
-        return this as FrogeServer<ServiceMap & ServiceMap2, ServiceGroups & ServiceGroups2>;
+        for (const plugin of groupPlugins) {
+            if (plugin.server) {
+                continue;
+            }
+            plugin.server = await plugin.factory({
+                services: this.services,
+                envs: envHelper,
+            });
+            if (plugin.pushConfig) {
+                plugin.server.configure(this.config);
+            }
+            for (const key of plugin.server.map.keys()) {
+                if (this.map.has(key)) {
+                    throw new Error(`Plugin service ${key} is conflicting with existing service ${key}`);
+                }
+            }
+            await plugin.server.start();
+            for (const [key, container] of plugin.server.map) {
+                this.map.set(key, container);
+            }
+        }
+    }
+
+    private async stopPlugins(level: number) {
+        const groupPlugins = this.plugins.get(level);
+        if (!groupPlugins) {
+            return;
+        }
+        for (const plugin of groupPlugins.toReversed()) {
+            if (!plugin.server) {
+                continue;
+            }
+            await plugin.server.stop();
+            for (const key of plugin.server.map.keys()) {
+                this.map.delete(key);
+            }
+            plugin.server = undefined;
+        }
+    }
+
+    private async startService(key: keyof ServiceMap & string, container: ServiceContainer<any>) {
+        if (container.up) {
+            this.config.verbose && console.log(`[${key}] Already initialized`);
+            return;
+        }
+        this.config.verbose && console.log(`[${key}] Initializing...`);
+        const value = container.init({
+            services: this.services,
+            envs: envHelper,
+            log: (...items: any) => this.config.verbose && console.log(`[${key}]`, ...items),
+            plug: <T>() => plug<T>(key),
+        });
+        if (value instanceof Promise) {
+            container.value = await value;
+        } else {
+            container.value = value;
+        }
+        if (container.plug) {
+            (container.plug as any).__startedService = container.value;
+        }
+        container.up = true;
+        if (container.value?.isFrogePlug) {
+            console.warn(`[${key}] Got a plug instead of the service`);
+        } else {
+            this.config.verbose && console.log(`[${key}] Ready`);
+        }
+    }
+
+    private async stopService(key: keyof ServiceMap & string, container: ServiceContainer<any>) {
+        if (typeof container.destroy === 'undefined' || typeof container.value === 'undefined') {
+            return;
+        }
+        this.config.verbose && console.log(`[${key}] Destroying...`);
+        await container.destroy(container.value);
+        container.value = undefined;
+        if (container.plug) {
+            (container.plug as any).__startedService = undefined;
+        }
+        container.up = false;
+        this.config.verbose && console.log(`[${key}] Destroyed`);
     }
 
     private async startInternal(target?: keyof ServiceMap & string) {
         const targetLevel: number|undefined = target && this.map.get(target)?.level;
         const startGroups = Map.groupBy(
             this.map.entries().filter(([key, info]) => key === target || typeof targetLevel === 'undefined' || info.level < targetLevel),
-            ([key, info]) => this.config.parallelStartGroups ? info.level : key,
+            ([, info]) => info.level,
         );
-        for (const group of startGroups.values()) {
-            await Promise.all(group.map(([key, container]) => (async () => {
-                if (container.up) {
-                    this.config.verbose && console.log(`[${key}] Already initialized`);
-                    return;
+        await this.startPlugins(-1);
+        for (const [level, group] of startGroups.entries()) {
+            if (this.config.parallelStartGroups) {
+                await Promise.all(group.map(entry => this.startService(...entry)));
+            } else {
+                for (const entry of group) {
+                    await this.startService(...entry);
                 }
-                this.config.verbose && console.log(`[${key}] Initializing...`);
-                const value = container.init({
-                    services: this.services,
-                    envs: envHelper,
-                    log: (...items: any) => this.config.verbose && console.log(`[${key}]`, ...items),
-                    plug: <T>() => plug<T>(key),
-                });
-                if (value instanceof Promise) {
-                    container.value = await value;
-                } else {
-                    container.value = value;
-                }
-                if (container.plug) {
-                    (container.plug as any).__startedService = container.value;
-                }
-                container.up = true;
-                if (container.value?.isFrogePlug) {
-                    console.warn(`[${key}] Got a plug instead of the service`);
-                } else {
-                    this.config.verbose && console.log(`[${key}] Ready`);
-                }
-            })()));
+            }
+            if (level !== targetLevel) {
+                await this.startPlugins(level);
+            }
         }
     }
 
     public async only<K extends keyof ServiceMap & string>(key: K): Promise<ServiceMap[K]> {
         const info = this.map.get(key);
-        if (!info?.up) {
+        if (!info) {
+            throw new Error(`Service ${key} doesn't exist or is from a plugin`);
+        }
+        if (!info.up) {
             this.config.verbose && console.log(`Starting only service '${String(key)}' and dependencies...`);
             await this.startInternal(key);
         }
@@ -227,24 +308,24 @@ class FrogeServer<ServiceMap extends Record<string,any>, ServiceGroups extends R
     public async stop(reasonText?: string) {
         this.config.verbose && console.log(`Stopping (${reasonText ?? 'unspecified reason'})...`);
         const stopGroups = Map.groupBy(
-            Array.from(this.map.entries()).reverse(),
-            ([key, info]) => this.config.parallelStopGroups ? info.level : key,
+            Array.from(this.map.entries())
+                // only stop my services
+                .filter(([, c]) => c.serverSymbol === this.symbol)
+                // in reverse order
+                .reverse(),
+            ([, info]) => info.level,
         );
-        for (const group of stopGroups.values()) {
-            await Promise.all(group.map(([key, container]) => (async() => {
-                if (typeof container.destroy === 'undefined' || typeof container.value === 'undefined') {
-                    return;
+        for (const [level, group] of stopGroups.entries()) {
+            await this.stopPlugins(level);
+            if (this.config.parallelStopGroups) {
+                await Promise.all(group.map(entry => this.stopService(...entry)));
+            } else {
+                for (const entry of group) {
+                    await this.stopService(...entry);
                 }
-                this.config.verbose && console.log(`[${key}] Destroying...`);
-                await container.destroy(container.value);
-                container.value = undefined;
-                if (container.plug) {
-                    (container.plug as any).__startedService = undefined;
-                }
-                container.up = false;
-                this.config.verbose && console.log(`[${key}] Destroyed`);
-            })()));
+            }
         }
+        await this.stopPlugins(-1);
     }
 
     public async launch() {
