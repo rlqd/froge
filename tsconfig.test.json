@@ -1,11 +1,13 @@
 {
     "include": ["src/**/*", "tests/**/*"],
     "compilerOptions": {
+        "rootDir": ".",
         "target": "ES2023",
         "sourceMap": true,
         "outDir": "test-dist",
         "strict": true,
         "lib": ["esnext"],
+        "types": ["node"],
         "esModuleInterop": true,
         "moduleResolution": "NodeNext",
         "module": "NodeNext"

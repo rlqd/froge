@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,6 +10,72 @@ function tempPath(name: string): string {
 }
 
 describe('Envs', () => {
+    describe('_FILE values', () => {
+        let filePath: string;
+        let cleanup: () => void;
+
+        beforeEach(() => {
+            const name = 'TEST_FILE_VALUE';
+            const previousValue = process.env[name];
+            const previousFile = process.env[name + '_FILE'];
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'env-wrapper-test-'));
+            filePath = path.join(dir, 'value');
+            cleanup = () => {
+                if (previousValue === undefined) delete process.env[name];
+                else process.env[name] = previousValue;
+                if (previousFile === undefined) delete process.env[name + '_FILE'];
+                else process.env[name + '_FILE'] = previousFile;
+                fs.rmSync(dir, { recursive: true, force: true });
+            };
+            delete process.env[name];
+            process.env[name + '_FILE'] = filePath;
+        });
+        afterEach(() => cleanup());
+
+        it('string(): reads UTF-8 contents without trimming and overrides the default', () => {
+            fs.writeFileSync(filePath, 'hello café\n');
+            assert.equal(envs.TEST_FILE_VALUE.string('default'), 'hello café\n');
+        });
+
+        it('number(): parses a value from a file', () => {
+            fs.writeFileSync(filePath, '42');
+            assert.equal(envs.TEST_FILE_VALUE.number(7), 42);
+        });
+
+        it('bool(): parses a value from a file', () => {
+            fs.writeFileSync(filePath, 'FALSE');
+            assert.equal(envs.TEST_FILE_VALUE.bool(true), false);
+        });
+
+        it('prefers the direct variable over the file', () => {
+            fs.writeFileSync(filePath, 'from file');
+            process.env.TEST_FILE_VALUE = 'direct';
+            assert.equal(envs.TEST_FILE_VALUE.string(), 'direct');
+        });
+
+        it('preserves an empty direct variable instead of loading the file', () => {
+            fs.writeFileSync(filePath, 'from file');
+            process.env.TEST_FILE_VALUE = '';
+            assert.equal(envs.TEST_FILE_VALUE.string({ nonEmpty: false }), '');
+        });
+
+        it('applies empty-string validation and defaults to an empty file', () => {
+            fs.writeFileSync(filePath, '');
+            assert.throws(() => envs.TEST_FILE_VALUE.string(), {
+                message: 'Env var "TEST_FILE_VALUE" is empty',
+            });
+            assert.equal(envs.TEST_FILE_VALUE.string({ nonEmpty: false }), '');
+            assert.equal(envs.TEST_FILE_VALUE.string('default'), 'default');
+        });
+
+        it('treats a nonexistent file as an unset variable', () => {
+            assert.equal(envs.TEST_FILE_VALUE.string('default'), 'default');
+            assert.throws(() => envs.TEST_FILE_VALUE.string(), {
+                message: 'Env var "TEST_FILE_VALUE" is not set',
+            });
+        });
+    });
+
     it('string(): returns env var when set', () => {
         process.env.TEST_STRING = 'hello';
         assert.equal(envs.TEST_STRING.string(), 'hello');

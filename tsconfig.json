@@ -8,6 +8,7 @@
         "rootDir": "src",
         "strict": true,
         "lib": ["esnext"],
+        "types": ["node"],
         "esModuleInterop": true,
         "moduleResolution": "NodeNext",
         "module": "NodeNext"

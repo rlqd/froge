@@ -30,13 +30,23 @@ class EnvWrapper {
     public readonly i: typeof this.int = this.int.bind(this);
     public readonly b: typeof this.bool = this.bool.bind(this);
 
+    private getEnvValue() {
+        if (process.env[this.name] !== undefined) {
+            return process.env[this.name];
+        }
+        const filePath = process.env[this.name + '_FILE'];
+        if (filePath && fs.existsSync(filePath)) {
+            return fs.readFileSync(filePath, 'utf-8');
+        }
+    }
+
     public string(defaultValue?: string): string;
     public string(config?: {def?: string, nonEmpty?: boolean}): string;
     public string(defaultOrConfig?: string|{def?: string, nonEmpty?: boolean}) {
         const config = typeof defaultOrConfig === 'object' ? defaultOrConfig : {};
         const defVal = typeof defaultOrConfig === 'string' ? defaultOrConfig : config.def;
         const nonEmpty = config.nonEmpty ?? true;
-        const val = process.env[this.name] ?? defVal;
+        const val = this.getEnvValue() ?? defVal;
         if (typeof val === 'undefined') {
             throw new Error(`Env var "${this.name}" is not set`);
         }
@@ -125,7 +135,7 @@ class EnvWrapper {
     public number(defaultOrConfig?: number|{def?: number, min?: number, max?: number}): number {
         const config = typeof defaultOrConfig === 'object' ? defaultOrConfig : {};
         const defVal = typeof defaultOrConfig === 'number' ? defaultOrConfig : config.def;
-        const val = process.env[this.name];
+        const val = this.getEnvValue();
         if (typeof val === 'undefined' && typeof defVal === 'undefined') {
             throw new Error(`Env var "${this.name}" is not set`);
         }
@@ -176,7 +186,7 @@ class EnvWrapper {
         const defVal = typeof defaultOrConfig === 'boolean' ? defaultOrConfig : config.def;
         const strict = config.strict ?? false;
 
-        const val = process.env[this.name];
+        const val = this.getEnvValue();
         if (typeof val === 'undefined') {
             if (typeof defVal === 'undefined') {
                 throw new Error(`Env var "${this.name}" is not set`);
